@@ -1,0 +1,15 @@
+[package]
+name = "iroh-chat-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = {version = "*", features=["full"]}
+iroh = "*"
+iroh-docs = {version = "*", features=["rpc"]}
+iroh-blobs = {version = "*", features=["rpc"]}
+iroh-gossip = {version = "*", features=["rpc"]}
+quic-rpc = "0.17.3"
+anyhow = "1.0.95"
+dialoguer = "0.11.0"
+futures-lite = "2.6.0"
