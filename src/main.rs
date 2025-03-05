@@ -5,15 +5,17 @@ use futures_lite::{Stream, StreamExt};
 use iroh::protocol::Router;
 use iroh_blobs::util::local_pool::LocalPool;
 use iroh_docs::{
-    DocTicket,
+    AuthorId, DocTicket,
     engine::LiveEvent,
     rpc::{
         client::docs::{Doc, ShareMode},
         proto::{Request, Response},
     },
 };
+use message::Message;
 use quic_rpc::transport::flume::FlumeConnector;
 use tokio::pin;
+mod message;
 
 pub(crate) type BlobsClient = iroh_blobs::rpc::client::blobs::Client<
     FlumeConnector<iroh_blobs::rpc::proto::Response, iroh_blobs::rpc::proto::Request>,
@@ -28,12 +30,8 @@ pub(crate) type GossipClient = iroh_gossip::rpc::client::Client<
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let i = Arc::new(Iroh::new(".iroh-dir".into()).await?);
-    let author = i.docs.authors().default().await?;
-
-    println!("author: {}", author.fmt_short());
-
-    let _ = tokio::spawn(menu_loop(i.clone())).await;
-
+    println!("author: {}", i.author.fmt_short());
+    let _ = tokio::spawn(menu_loop(i)).await;
     Ok(())
 }
 
@@ -44,6 +42,26 @@ async fn menu_loop(node: Arc<Iroh>) {
             .interact_text()
             .unwrap();
         match input.as_str() {
+            "create" => {
+                let (chat, sub) = node.create_chat().await.unwrap();
+                let nodec = node.clone();
+                tokio::spawn(chat_loop((chat.clone(), Box::pin(sub)), nodec.clone()));
+                loop {
+                    let line: String = Input::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Chat:")
+                        .interact_text()
+                        .unwrap();
+                    let timestamp = std::time::UNIX_EPOCH.elapsed().unwrap().as_micros();
+                    let _ = chat
+                        .set_bytes(
+                            node.author,
+                            timestamp.to_string(),
+                            bincode::serialize(&Message::new_text(node.author, line)).unwrap(),
+                        )
+                        .await
+                        .unwrap();
+                }
+            }
             "join" => {
                 let join_ticket: String = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("ticket:")
@@ -62,28 +80,9 @@ async fn menu_loop(node: Arc<Iroh>) {
                     let timestamp = std::time::UNIX_EPOCH.elapsed().unwrap().as_micros();
                     let _ = chat
                         .set_bytes(
-                            node.docs.authors().default().await.unwrap(),
+                            node.author,
                             timestamp.to_string(),
-                            line,
-                        )
-                        .await
-                        .unwrap();
-                }
-            }
-            "create" => {
-                let (chat, sub) = node.create_chat().await.unwrap();
-                tokio::spawn(chat_loop((chat.clone(), sub), node.clone()));
-                loop {
-                    let line: String = Input::with_theme(&ColorfulTheme::default())
-                        .with_prompt("Chat:")
-                        .interact_text()
-                        .unwrap();
-                    let timestamp = std::time::UNIX_EPOCH.elapsed().unwrap().as_micros();
-                    let _ = chat
-                        .set_bytes(
-                            node.docs.authors().default().await.unwrap(),
-                            timestamp.to_string(),
-                            line,
+                            bincode::serialize(&Message::new_text(node.author, line)).unwrap(),
                         )
                         .await
                         .unwrap();
@@ -97,22 +96,25 @@ async fn menu_loop(node: Arc<Iroh>) {
 async fn chat_loop(
     (_, sub): (
         Doc<FlumeConnector<Response, Request>>,
-        impl Stream<Item = Result<LiveEvent, anyhow::Error>>,
+        impl Stream<Item = Result<LiveEvent, anyhow::Error>> + 'static,
     ),
     iroh: Arc<Iroh>,
 ) {
     pin! {sub};
     let blobs = iroh.blobs.clone();
     while let Ok(e) = sub.try_next().await {
-        if let Some(LiveEvent::InsertRemote { from, entry, .. }) = e {
+        if let Some(LiveEvent::InsertRemote { entry, .. }) = e {
             let message_content = blobs.read_to_bytes(entry.content_hash()).await;
             match message_content {
                 Ok(a) => {
-                    println!(
-                        "{}: {}",
-                        from.fmt_short(),
-                        String::from_utf8(a.into()).unwrap()
-                    );
+                    let msg: Message = bincode::deserialize(&a).unwrap();
+                    match msg {
+                        Message::TextMessage { author, content } => {
+                            println!("{}: {}", author.fmt_short(), content);
+                        }
+                        Message::ChatTicket { .. } => {}
+                        _ => {}
+                    }
                 }
                 Err(_) => {
                     // may still be syncing so
@@ -120,11 +122,14 @@ async fn chat_loop(
                         thread::sleep(Duration::from_secs(1));
                         let message_content = blobs.read_to_bytes(entry.content_hash()).await;
                         if let Ok(a) = message_content {
-                            println!(
-                                "{}: {}",
-                                from.fmt_short(),
-                                String::from_utf8(a.into()).unwrap()
-                            );
+                            let msg: Message = bincode::deserialize(&a).unwrap();
+                            match msg {
+                                Message::TextMessage { author, content } => {
+                                    println!("{}: {}", author.fmt_short(), content);
+                                }
+                                Message::ChatTicket { author, content } => {}
+                                _ => {}
+                            }
                             break;
                         }
                     }
@@ -142,6 +147,7 @@ pub(crate) struct Iroh {
     pub(crate) gossip: GossipClient,
     pub(crate) blobs: BlobsClient,
     pub(crate) docs: DocsClient,
+    pub(crate) author: AuthorId,
 }
 
 impl Iroh {
@@ -172,7 +178,7 @@ impl Iroh {
         // add iroh blobs
         let blobs = iroh_blobs::net_protocol::Blobs::persistent(&path)
             .await?
-            .build(&local_pool.handle(), builder.endpoint());
+            .build(local_pool.handle(), builder.endpoint());
 
         // add docs
         let docs = iroh_docs::protocol::Docs::persistent(path)
@@ -190,6 +196,7 @@ impl Iroh {
             gossip: gossip.client().clone(),
             blobs: blobs.client().clone(),
             docs: docs.client().clone(),
+            author: docs.client().authors().default().await?,
         })
     }
 
@@ -197,9 +204,10 @@ impl Iroh {
         &self,
     ) -> anyhow::Result<(
         Doc<FlumeConnector<Response, Request>>,
-        impl Stream<Item = Result<LiveEvent, anyhow::Error>>,
+        impl Stream<Item = Result<LiveEvent, anyhow::Error>> + 'static,
     )> {
-        let temp_doc = self.docs.create().await?;
+        let a = self.clone();
+        let temp_doc = a.docs.create().await?;
 
         let ticket = temp_doc
             .share(
@@ -208,17 +216,11 @@ impl Iroh {
             )
             .await?;
 
-        let (chat, sub) = self
-            .docs
-            .import_and_subscribe(ticket.clone())
-            .await
-            .unwrap();
-        let _ = chat.set_bytes(
-            self.docs.authors().default().await.unwrap(),
-            "chat-ticket",
-            ticket.to_string(),
-        );
-        println!("share this ticket to your friend: {}", ticket.to_string());
+        let (chat, sub) = a.docs.import_and_subscribe(ticket.clone()).await.unwrap();
+        let test: Vec<u8> =
+            bincode::serialize(&Message::set_ticket(a.author, ticket.to_string())).unwrap();
+        let _ = chat.set_bytes(a.author, "chat-ticket", test).await;
+        println!("share this ticket to your friend: {}", ticket);
         Ok((chat, sub))
     }
 
@@ -227,11 +229,18 @@ impl Iroh {
         ticket: String,
     ) -> anyhow::Result<(
         Doc<FlumeConnector<Response, Request>>,
-        impl Stream<Item = Result<LiveEvent, anyhow::Error>>,
+        impl Stream<Item = Result<LiveEvent, anyhow::Error>> + 'static,
     )> {
+        let a = self.clone();
         let doct = DocTicket::from_str(ticket.as_str())?;
-        let (chat, sub) = self.docs.import_and_subscribe(doct).await?;
-
+        let (chat, sub) = a.docs.import_and_subscribe(doct).await?;
+        let _ = chat
+            .set_bytes(
+                a.author,
+                "chat-ticket",
+                bincode::serialize(&Message::set_ticket(a.author, ticket.clone())).unwrap(),
+            )
+            .await;
         Ok((chat, sub))
     }
 }
