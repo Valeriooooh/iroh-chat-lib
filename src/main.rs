@@ -47,6 +47,11 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn ui_create(node: Arc<Iroh>) {
+    let client = node.create_chat().await.unwrap();
+    ui_chat(client, node).await
+}
+
 async fn ui_join(node: Arc<Iroh>) {
     let join_ticket: String = Input::with_theme(&ColorfulTheme::default())
         .with_prompt("ticket:")
@@ -75,10 +80,12 @@ async fn ui_chat(mut client: ChatClient, node: Arc<Iroh>) {
     loop {
         tokio::select! {
             line = rx1.recv() => {
-                if line.clone().unwrap().starts_with("set name "){
-                    let _ = client.set_author_name(node.clone().author, "john".to_string()).await;
+                let line = line.unwrap();
+                if line.clone().starts_with("set name "){
+                    let name = line.split(" ").last().unwrap();
+                    let _ = client.set_author_name(node.clone().author, name.to_string()).await;
                 }else{
-                    let _ = client.send_message(node.clone().author, Message::new_text(node.author, line.unwrap())).await;
+                    let _ = client.send_message(node.clone().author, Message::new_text(node.author, line.clone())).await;
                 }
             }
             Ok(msg) = client.message_receiver_loop(node.clone()) => {
@@ -86,8 +93,8 @@ async fn ui_chat(mut client: ChatClient, node: Arc<Iroh>) {
                 Message::TextMessage { author, content } => {
                     let name = client.get_author_name(author, node.clone()).await;
                     match name{
-                        Ok(a) => println!("\n{}:{}", a, content.to_string()),
-                        Err(_) => println!("\n{}:{}", author.fmt_short(), content.to_string()),
+                        Ok(a) => println!("{}:{}", a, content.to_string()),
+                        Err(_) => println!("{}:{}", author.fmt_short(), content.to_string()),
                     }
                                     }
                 Message::ChatTicket{
@@ -102,7 +109,3 @@ async fn ui_chat(mut client: ChatClient, node: Arc<Iroh>) {
     }
 }
 
-async fn ui_create(node: Arc<Iroh>) {
-    let client = node.create_chat().await.unwrap();
-    ui_chat(client, node).await
-}
