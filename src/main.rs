@@ -10,7 +10,6 @@ mod cli;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let i = Arc::new(Iroh::new(".iroh-dir".into()).await?);
-    //start_cli(i).await;
-
+    start_cli(i).await;
     Ok(())
 }
