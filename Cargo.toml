@@ -3,8 +3,17 @@ name = "iroh-chat-cli"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+# `lib` is required for non-library targets,
+# such as tests and benchmarks.
+# `cdylib` is for Linux, Android, Windows, and web.
+# `staticlib` is for iOS and macOS.
+crate-type = ["lib", "cdylib", "staticlib"]
+
 [dependencies]
-tokio = {version = "*", features=["full"]}
+rinf = "7.3.0"
+prost = "0.13.0"
+tokio = {version = "*", features = ["rt", "macros"]}
 iroh = "*"
 iroh-docs = {version = "*", features=["rpc"]}
 iroh-blobs = {version = "*", features=["rpc"]}

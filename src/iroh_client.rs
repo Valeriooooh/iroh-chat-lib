@@ -18,7 +18,7 @@ pub type GossipClient = iroh_gossip::rpc::client::Client<
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
-pub(crate) struct Iroh {
+pub struct Iroh {
     _local_pool: Arc<iroh_blobs::util::local_pool::LocalPool>,
     router: iroh::protocol::Router,
     pub(crate) gossip: GossipClient,

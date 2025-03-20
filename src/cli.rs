@@ -4,7 +4,7 @@ use dialoguer::{theme::ColorfulTheme, Input};
 use futures_lite::StreamExt;
 use tokio::sync::mpsc;
 
-use crate::{client::ChatClient, message::Message, Iroh};
+use crate::{client::ChatClient, message::Message, iroh_client::Iroh};
 
 
 enum ChatType {
