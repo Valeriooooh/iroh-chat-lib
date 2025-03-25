@@ -1,10 +1,17 @@
 use std::{path::PathBuf, pin::Pin, str::FromStr, sync::Arc};
 
 use iroh_blobs::util::local_pool::LocalPool;
-use iroh_docs::{rpc::client::docs::ShareMode, AuthorId, DocTicket};
+use iroh_docs::{
+    AuthorId, DocTicket,
+    rpc::{AddrInfoOptions, client::docs::ShareMode},
+};
+use iroh_gossip::RpcClient;
 use quic_rpc::transport::flume::FlumeConnector;
 
-use crate::{client::{ChatC, ChatClient}, message::Message};
+use crate::{
+    client::{ChatC, ChatClient},
+    message::Message,
+};
 
 pub type BlobsClient = iroh_blobs::rpc::client::blobs::Client<
     FlumeConnector<iroh_blobs::rpc::proto::Response, iroh_blobs::rpc::proto::Request>,
@@ -12,9 +19,8 @@ pub type BlobsClient = iroh_blobs::rpc::client::blobs::Client<
 pub type DocsClient = iroh_docs::rpc::client::docs::Client<
     FlumeConnector<iroh_docs::rpc::proto::Response, iroh_docs::rpc::proto::Request>,
 >;
-pub type GossipClient = iroh_gossip::rpc::client::Client<
-    FlumeConnector<iroh_gossip::rpc::proto::Response, iroh_gossip::rpc::proto::Request>,
->;
+pub type GossipClient =
+    RpcClient<FlumeConnector<iroh_gossip::rpc::proto::Response, iroh_gossip::rpc::proto::Request>>;
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -55,7 +61,7 @@ impl Iroh {
         // add iroh blobs
         let blobs = iroh_blobs::net_protocol::Blobs::persistent(&path)
             .await?
-            .build(local_pool.handle(), builder.endpoint());
+            .build(&local_pool, builder.endpoint());
 
         // add docs
         let docs = iroh_docs::protocol::Docs::persistent(path)
@@ -66,28 +72,24 @@ impl Iroh {
             .accept(iroh_gossip::ALPN, Arc::new(gossip.clone()))
             .accept(iroh_blobs::ALPN, blobs.clone())
             .accept(iroh_docs::ALPN, Arc::new(docs.clone()));
+        let gc = gossip.client().clone();
 
         Ok(Self {
             _local_pool: Arc::new(local_pool),
             router: builder.spawn().await?,
-            gossip: gossip.client().clone(),
+            gossip: gc,
             blobs: blobs.client().clone(),
             docs: docs.client().clone(),
             author: docs.client().authors().default().await?,
         })
     }
 
-    pub async fn create_chat(
-        &self,
-    ) -> anyhow::Result<ChatClient> {
+    pub async fn create_chat(&self) -> anyhow::Result<ChatClient> {
         let a = self.clone();
         let temp_doc = a.docs.create().await?;
 
         let ticket = temp_doc
-            .share(
-                ShareMode::Write,
-                iroh_docs::rpc::AddrInfoOptions::RelayAndAddresses,
-            )
+            .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
             .await?;
 
         let (chat, sub): (ChatC, _) = a.docs.import_and_subscribe(ticket.clone()).await.unwrap();
@@ -96,18 +98,15 @@ impl Iroh {
             bincode::serialize(&Message::set_ticket(a.author, ticket.to_string())).unwrap();
         let _ = chat.set_bytes(a.author, "chat-ticket", test).await;
         println!("share this ticket to your friend: {}", ticket);
-        Ok(ChatClient{chat,sub})
+        Ok(ChatClient { chat, sub })
     }
 
-    pub async fn join_chat(
-        &self,
-        ticket: String,
-    ) -> Option<anyhow::Result<ChatClient>> {
+    pub async fn join_chat(&self, ticket: String) -> Option<anyhow::Result<ChatClient>> {
         let a = self.clone();
-        let Ok(doct) = DocTicket::from_str(ticket.as_str()) else{
+        let Ok(doct) = DocTicket::from_str(ticket.as_str()) else {
             return None;
         };
-        let Ok((chat, sub)) = a.docs.import_and_subscribe(doct).await else{
+        let Ok((chat, sub)) = a.docs.import_and_subscribe(doct).await else {
             return None;
         };
         let sub = Pin::new(Box::new(sub));
@@ -118,6 +117,6 @@ impl Iroh {
                 bincode::serialize(&Message::set_ticket(a.author, ticket.clone())).unwrap(),
             )
             .await;
-        Some(Ok(ChatClient { chat , sub }))
+        Some(Ok(ChatClient { chat, sub }))
     }
 }

@@ -14,13 +14,13 @@ crate-type = ["lib", "cdylib", "staticlib"]
 rinf = "7.3.0"
 prost = "0.13.0"
 tokio = {version = "*", features = ["rt", "macros"]}
-iroh = "*"
-iroh-docs = {version = "*", features=["rpc"]}
-iroh-blobs = {version = "*", features=["rpc"]}
-iroh-gossip = {version = "*", features=["rpc"]}
+iroh = "0.30"
+iroh-docs = {version = "0.30", features=["rpc"]}
+iroh-blobs = {version = "0.30", features=["rpc"]}
+iroh-gossip = {version = "0.30", features=["rpc"]}
 serde = {version = "*", features = ["derive"]}
 serde_bytes="*"
-bincode = "*"
+bincode = "1.3.3"
 quic-rpc = "0.17.3"
 anyhow = "1.0.95"
 dialoguer = "0.11.0"
