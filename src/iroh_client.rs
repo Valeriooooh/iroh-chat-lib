@@ -61,7 +61,7 @@ impl Iroh {
         // add iroh blobs
         let blobs = iroh_blobs::net_protocol::Blobs::persistent(&path)
             .await?
-            .build(&local_pool, builder.endpoint());
+            .build(builder.endpoint());
 
         // add docs
         let docs = iroh_docs::protocol::Docs::persistent(path)
